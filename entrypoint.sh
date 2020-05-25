@@ -1,16 +1,17 @@
 #!/bin/bash
 
 # config
-default_semvar_bump=${DEFAULT_BUMP:-minor}
-with_v=${WITH_V:-false}
+default_semvar_bump=${DEFAULT_BUMP:-patch}
+with_v=${WITH_V:-true}
 release_branches=${RELEASE_BRANCHES:-master}
 custom_tag=${CUSTOM_TAG}
 
 pre_release="true"
+current_branch=${GITHUB_REF#'refs/heads/'}
 IFS=',' read -ra branch <<< "$release_branches"
 for b in "${branch[@]}"; do
-    echo "Is $b a match for ${GITHUB_REF#'refs/heads/'}"
-    if [[ "${GITHUB_REF#'refs/heads/'}" =~ $b ]]
+    echo "Is $b a match for $current_branch"
+    if [[ "$current_branch" =~ $b ]]
     then
         pre_release="false"
     fi
@@ -23,6 +24,7 @@ tag_commit=$(git rev-list -n 1 $tag)
 
 # get current commit hash for tag
 commit=$(git rev-parse HEAD)
+total_commits=$(git rev-list --count HEAD)
 
 if [ "$tag_commit" == "$commit" ]; then
     echo "No new commits since previous tag. Skipping..."
@@ -56,7 +58,8 @@ fi
 
 if $pre_release
 then
-    new="$new-${commit:0:7}"
+    # Based on pre-existing Viostream tagging methodology
+    new="$new-f.$total_commits+$current_branch"
 fi
 
 if [ ! -z $custom_tag ]
