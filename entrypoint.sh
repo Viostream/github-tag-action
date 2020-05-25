@@ -5,21 +5,31 @@ default_semvar_bump=${DEFAULT_BUMP:-patch}
 with_v=${WITH_V:-true}
 release_branches=${RELEASE_BRANCHES:-master}
 custom_tag=${CUSTOM_TAG}
+source=${SOURCE:-.}
+dryrun=${DRY_RUN:-false}
+initial_version=${INITIAL_VERSION:-0.0.0}
+
+cd ${GITHUB_WORKSPACE}/${source}
+
+current_branch=$(git rev-parse --abbrev-ref HEAD)
 
 pre_release="true"
 current_branch=${GITHUB_REF#'refs/heads/'}
 IFS=',' read -ra branch <<< "$release_branches"
 for b in "${branch[@]}"; do
-    echo "Is $b a match for $current_branch"
-    if [[ "$current_branch" =~ $b ]]
-    then
-        pre_release="false"
-    fi
+  echo "Is $b a match for ${current_branch}"
+  if [[ "${current_branch}" =~ $b ]]
+  then
+    pre_release="false"
+  fi
 done
 echo "pre_release = $pre_release"
 
-# get latest tag
-tag=$(git describe --tags `git rev-list --tags --max-count=1`)
+# fetch tags
+git fetch --tags
+
+# get latest tag that looks like a semver (with or without v)
+tag=$(git for-each-ref --sort=-v:refname --count=1 --format '%(refname)' refs/tags/[0-9]*.[0-9]*.[0-9]* refs/tags/v[0-9]*.[0-9]*.[0-9]* | cut -d / -f 3-)
 tag_commit=$(git rev-list -n 1 $tag)
 
 # get current commit hash for tag
@@ -27,51 +37,80 @@ commit=$(git rev-parse HEAD)
 total_commits=$(git rev-list --count HEAD)
 
 if [ "$tag_commit" == "$commit" ]; then
-    echo "No new commits since previous tag. Skipping..."
-    echo ::set-output name=tag::$tag
-    exit 0
+  echo "No new commits since previous tag. Skipping..."
+  echo ::set-output name=tag::$tag
+  exit 0
 fi
 
-# if there are none, start tags at 0.0.0
+# if there are none, start tags at INITIAL_VERSION which defaults to 0.0.0
 if [ -z "$tag" ]
 then
-    log=$(git log --pretty=oneline)
-    tag=0.0.0
+  log=$(git log --pretty='%B')
+  tag="$initial_version"
 else
-    log=$(git log $tag..HEAD --pretty=oneline)
+  log=$(git log $tag..HEAD --pretty='%B')
 fi
+
+echo $log
+
+# this will bump the semvar using the default bump level,
+# or it will simply pass if the default was "none"
+function default-bump {
+  if [ "$default_semvar_bump" == "none" ]; then
+    echo "Default bump was set to none. Skipping..."
+    exit 0
+  else
+    semver bump "${default_semvar_bump}" $tag
+  fi
+}
 
 # get commit logs and determine home to bump the version
 # supports #major, #minor, #patch (anything else will be 'minor')
 case "$log" in
-    *#major* ) new=$(semver bump major $tag);;
-    *#minor* ) new=$(semver bump minor $tag);;
-    *#patch* ) new=$(semver bump patch $tag);;
-    * ) new=$(semver bump `echo $default_semvar_bump` $tag);;
+  *#major* ) new=$(semver bump major $tag); part="major";;
+  *#minor* ) new=$(semver bump minor $tag); part="minor";;
+  *#patch* ) new=$(semver bump patch $tag); part="patch";;
+  * ) new=$(default-bump); part=$default_semvar_bump;;
 esac
 
-# prefix with 'v'
-if $with_v
-then
-    new="v$new"
-fi
+echo $part
 
-if $pre_release
+# did we get a new tag?
+if [ ! -z "$new" ]
 then
-    # Based on pre-existing Viostream tagging methodology
-    new="$new-f.$total_commits+$current_branch"
+  # prefix with 'v'
+  if $with_v
+  then
+    new="v$new"
+  fi
+
+  if $pre_release
+  then
+    # Based on pre-existing Viostream tagging scheme
+      new="$new-f.$total_commits+$current_branch"
+  fi
 fi
 
 if [ ! -z $custom_tag ]
 then
-    new="$custom_tag"
+  new="$custom_tag"
 fi
 
 echo $new
 
 # set outputs
 echo ::set-output name=new_tag::$new
+echo ::set-output name=part::$part
+
+# use dry run to determine the next tag
+if $dryrun
+then
+    echo ::set-output name=tag::$tag
+    exit 0
+fi 
+
 echo ::set-output name=tag::$new
+
 
 if $pre_release
 then
