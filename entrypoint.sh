@@ -87,7 +87,7 @@ then
   if $pre_release
   then
     # Based on pre-existing Viostream tagging scheme
-      new="$new-f.$total_commits+$current_branch"
+      new="$new-f.$total_commits-$current_branch"
   fi
 fi
 
